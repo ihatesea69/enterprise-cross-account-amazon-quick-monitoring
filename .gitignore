@@ -1,0 +1,45 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+.terraform.lock.hcl
+*.tfvars
+plan.json
+plan.log
+apply.log
+apply.err
+out.json
+
+# Real deployments (account IDs, state) never belong in this repository
+deploy-*/
+
+# Lambda zips
+modules/quicksuite-analytics/lambda/*.zip
+
+# Lambda layer builds
+modules/quicksuite-analytics/lambda/dependencies_layer/layer.zip
+modules/quicksuite-analytics/lambda/dependencies_layer/python/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.hypothesis/
+
+# Temp files
+temp/
+
+# Old project reference (local only)
+old_project_reference/
+
+# Troubleshoot artifacts (local only — not for public repo)
+troubleshoot/
