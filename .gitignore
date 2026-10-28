@@ -26,6 +26,9 @@ modules/quicksuite-analytics/lambda/dependencies_layer/python/
 .idea/
 .vscode/
 *.swp
+# draw.io desktop backups
+*.bkp
+*.drawio.bkp
 
 # OS
 .DS_Store
