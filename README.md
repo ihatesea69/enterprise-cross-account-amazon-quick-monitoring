@@ -13,22 +13,11 @@ the cross-account parts and the migration path. See [CHANGES.md](CHANGES.md).
 
 ## Architecture
 
-The full diagram is [docs/architecture.drawio](docs/architecture.drawio) (3 pages: temporary,
-transition, final). Open it in [draw.io](https://app.diagrams.net).
+![Amazon Quick Enterprise Monitoring: cross-account architecture](docs/architecture.png)
 
-```mermaid
-flowchart LR
-  subgraph M["Monitored account"]
-    Q["Amazon Quick"] --> DS["Delivery sources<br/>chat, feedback, agent-hours<br/>(no message text)"]
-    R["IAM role source-reader<br/>read-only, ExternalId"]
-  end
-  subgraph C["Collector account"]
-    DD["Delivery destination<br/>(log Region)"] --> S3["S3 bucket"] --> SF["Lambda + Step Functions<br/>Parquet"] --> AT["Glue + Athena"] --> SP["SPICE"] --> DB["Dashboard"]
-    US["user-sync, metadata-sync"]
-  end
-  DS -- "cross-account delivery" --> DD
-  US -- "AssumeRole + ExternalId" --> R
-```
+The numbered arrows are explained under the image. The editable source is
+[docs/architecture.drawio](docs/architecture.drawio) (3 pages: temporary, transition, final);
+open it in [draw.io](https://app.diagrams.net).
 
 | Part | Where | Module or example |
 |---|---|---|
