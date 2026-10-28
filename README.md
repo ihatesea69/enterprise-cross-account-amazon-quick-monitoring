@@ -30,6 +30,26 @@ Nothing is stored in the monitored account during the cross-account phase. Each 
 account gets its own collector instance (`name_prefix`), so data from different accounts
 never mixes.
 
+## Dashboard preview
+
+Screenshots with sample data.
+
+**Summary:** message trends, conversations, queries per user, feedback and query scope.
+
+![Summary tab](docs/images/dashboard-summary.png)
+
+**Usage insights:** prompt categories, action intents, trends over time and categories by department.
+
+![Usage insights tab](docs/images/dashboard-usage-insights.png)
+
+**Uploads and asset activity:** largest uploads, content types, Spaces created and asset changes over time.
+
+![Uploads and asset activity](docs/images/dashboard-uploads.png)
+
+**Asset inventory:** Spaces, knowledge bases, flows, agents, documents and top creators.
+
+![Asset inventory tab](docs/images/dashboard-asset-inventory.png)
+
 ## Quick start
 
 Follow [examples/cross-account/README.md](examples/cross-account/README.md). In short:
