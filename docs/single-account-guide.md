@@ -146,6 +146,9 @@ To find your role name, go to the QuickSight console: **Manage QuickSight → Se
 The module attaches these inline policies to the role:
 - **`QuickSightS3Access-quicksuite`** --- read access to the quicksuite-logs S3 bucket (+ KMS decrypt if `s3_kms_key_arn` is set)
 - **`QuickSightCloudTrailAccess-quicksuite`** --- read access to the CloudTrail S3 bucket (only when `cloudtrail_mode = "existing"`)
+- **`QuickSightAthenaAccess-quicksuite`** --- Athena query actions on the `primary` workgroup and Glue read on this module's database only
+
+The module does **not** attach the AWS-managed `AWSQuicksightAthenaAccess` policy. The QuickSight service role is shared by every QuickSight project in the account, so an attachment owned by one Terraform state is detached by that state's `terraform destroy` and breaks Athena for the others. Earlier versions did attach it; on upgrade, a `removed` block makes Terraform forget that attachment without detaching it.
 
 ### KMS encryption (`s3_kms_key_arn`)
 
