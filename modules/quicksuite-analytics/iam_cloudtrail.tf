@@ -1,7 +1,7 @@
 resource "aws_iam_role_policy" "quicksight_cloudtrail_access" {
   count = var.cloudtrail_mode == "existing" ? 1 : 0
   name  = "QuickSightCloudTrailAccess-${local.name_prefix}"
-  role  = var.quicksight_service_role_name
+  role  = local.quicksight_role_name
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{

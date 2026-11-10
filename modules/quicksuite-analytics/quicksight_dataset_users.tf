@@ -24,16 +24,12 @@ resource "aws_quicksight_data_set" "users" {
                CAST(from_iso8601_timestamp(u.created_at) AS timestamp) AS account_created_at,
                from_unixtime(u.first_seen_date / 1000) AS first_active_at,
                CAST(u.monthly_agent_hours_allotment AS VARCHAR) AS monthly_agent_hours_allotment,
-               coalesce(
-                 date_diff('day', from_unixtime(c.last_chat_ms / 1000), current_timestamp),
-                 99999
-               ) AS days_since_last_used_chat,
-               coalesce(
-                 date_diff('day', from_unixtime(a.last_agent_sec), current_timestamp),
-                 99999
-               ) AS days_since_last_used_agent,
+               -- NULL (blank) = no activity of that kind inside the query window
+               -- (query_lookback_days). The old 99999 sentinel showed up as "99,999" days.
+               date_diff('day', from_unixtime(c.last_chat_ms / 1000), current_timestamp) AS days_since_last_used_chat,
+               date_diff('day', from_unixtime(a.last_agent_sec), current_timestamp) AS days_since_last_used_agent,
                CASE
-                 WHEN c.last_chat_ms IS NULL AND a.last_agent_sec IS NULL THEN 99999
+                 WHEN c.last_chat_ms IS NULL AND a.last_agent_sec IS NULL THEN NULL
                  ELSE date_diff(
                    'day',
                    greatest(
@@ -47,13 +43,15 @@ resource "aws_quicksight_data_set" "users" {
         LEFT JOIN (
           SELECT regexp_extract(user_arn, '[^/]+$') AS username,
                  MAX(event_timestamp) AS last_chat_ms
-          FROM ${aws_glue_catalog_database.quicksuite.name}.message_enriched
+          FROM ${aws_glue_catalog_database.quicksuite.name}.message_enriched me
+          WHERE ${replace(local.partition_window, "ALIAS", "me")}
           GROUP BY 1
         ) c ON c.username = u.username
         LEFT JOIN (
           SELECT regexp_extract(user_arn, '[^/]+$') AS username,
                  MAX(event_timestamp) AS last_agent_sec
-          FROM ${aws_glue_catalog_database.quicksuite.name}.agent_hours_enriched
+          FROM ${aws_glue_catalog_database.quicksuite.name}.agent_hours_enriched ah
+          WHERE ${replace(local.partition_window, "ALIAS", "ah")}
           GROUP BY 1
         ) a ON a.username = u.username
       EOT

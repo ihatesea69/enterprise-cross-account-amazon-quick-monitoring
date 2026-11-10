@@ -12,7 +12,8 @@ resource "aws_quicksight_data_set" "spice_capacity" {
       name            = "spice_capacity"
       sql_query       = <<-EOT
         SELECT timestamp, spice_limit_mb, spice_consumed_mb, year, month, day
-        FROM ${aws_glue_catalog_database.quicksuite.name}.qs_spice_capacity
+        FROM ${aws_glue_catalog_database.quicksuite.name}.qs_spice_capacity sc
+        WHERE ${replace(local.partition_window, "ALIAS", "sc")}
       EOT
       columns {
         name = "timestamp"

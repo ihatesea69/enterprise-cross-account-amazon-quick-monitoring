@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and fill in, then: terraform init && terraform apply
+
+# --- Required ---------------------------------------------------------------
+quicksight_admin_group = "QuickSightAdmins" # your QuickSight admin group name
+
+# --- AWS target -------------------------------------------------------------
+aws_region  = "us-east-1"  # Region where Amazon Quick emits vended logs and the dashboard lives
+aws_profile = "my-profile" # named AWS CLI/SSO profile; set to null to use the default chain
+
+# --- Optional ---------------------------------------------------------------
+dashboard_viewer_groups = [] # extra view-only QuickSight groups, e.g. ["managers"]
+budget_alert_emails     = [] # alerted if daily S3 request cost exceeds budget, e.g. ["you@example.com"]

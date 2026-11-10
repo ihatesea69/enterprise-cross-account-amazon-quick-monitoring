@@ -19,6 +19,7 @@ resource "aws_quicksight_data_set" "plugin_utilization" {
                p.month,
                p.day
         FROM ${aws_glue_catalog_database.quicksuite.name}.${aws_glue_catalog_table.plugin_utilization.name} p
+        WHERE ${replace(local.partition_window, "ALIAS", "p")}
       EOT
       columns {
         name = "event_timestamp"
@@ -143,9 +144,25 @@ resource "aws_quicksight_data_set" "plugin_utilization" {
   }
 }
 
+# SPICE Incremental Refresh at fixed daily times — Plugin Utilization (spice_refresh_daily_times)
+resource "aws_quicksight_refresh_schedule" "plugin_utilization_incremental_daily" {
+  for_each       = var.spice_enabled ? toset(var.spice_refresh_daily_times) : toset([])
+  aws_account_id = data.aws_caller_identity.current.account_id
+  data_set_id    = aws_quicksight_data_set.plugin_utilization.data_set_id
+  schedule_id    = "plugin-utilization-incremental-refresh-${replace(each.value, ":", "")}"
+  schedule {
+    refresh_type = "INCREMENTAL_REFRESH"
+    schedule_frequency {
+      interval        = "DAILY"
+      time_of_the_day = each.value
+      timezone        = var.spice_refresh_timezone
+    }
+  }
+}
+
 # SPICE Incremental Refresh Schedule — Plugin Utilization
 resource "aws_quicksight_refresh_schedule" "plugin_utilization_incremental" {
-  count          = var.spice_enabled ? 1 : 0
+  count          = var.spice_enabled && length(var.spice_refresh_daily_times) == 0 ? 1 : 0
   aws_account_id = data.aws_caller_identity.current.account_id
   data_set_id    = aws_quicksight_data_set.plugin_utilization.data_set_id
   schedule_id    = "plugin-utilization-incremental-refresh"

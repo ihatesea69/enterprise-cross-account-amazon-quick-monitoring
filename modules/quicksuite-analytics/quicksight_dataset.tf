@@ -50,6 +50,7 @@ resource "aws_quicksight_data_set" "messages" {
         FROM ${aws_glue_catalog_database.quicksuite.name}.message_enriched m
         LEFT JOIN ${aws_glue_catalog_database.quicksuite.name}.user_attributes u
           ON regexp_extract(m.user_arn, '[^/]+$') = u.username
+        WHERE ${replace(local.partition_window, "ALIAS", "m")}
 
         UNION ALL
 
@@ -93,6 +94,7 @@ resource "aws_quicksight_data_set" "messages" {
         FROM ${aws_glue_catalog_database.quicksuite.name}.agent_hours_enriched a
         LEFT JOIN ${aws_glue_catalog_database.quicksuite.name}.user_attributes u
           ON regexp_extract(a.user_arn, '[^/]+$') = u.username
+        WHERE ${replace(local.partition_window, "ALIAS", "a")}
 
         UNION ALL
 
@@ -139,6 +141,8 @@ resource "aws_quicksight_data_set" "messages" {
         LEFT JOIN ${aws_glue_catalog_database.quicksuite.name}.message_enriched c
           ON f.conversation_id = c.conversation_id
           AND f.system_message_id = c.system_message_id
+          AND ${replace(local.partition_window, "ALIAS", "c")}
+        WHERE ${replace(local.partition_window, "ALIAS", "f")}
       EOT
       columns {
         name = "event_timestamp"
@@ -662,9 +666,25 @@ resource "aws_quicksight_data_set" "messages" {
   }
 }
 
+# SPICE Incremental Refresh Schedule at fixed daily times (used when spice_refresh_daily_times is set)
+resource "aws_quicksight_refresh_schedule" "incremental_daily" {
+  for_each       = var.spice_enabled ? toset(var.spice_refresh_daily_times) : toset([])
+  aws_account_id = data.aws_caller_identity.current.account_id
+  data_set_id    = aws_quicksight_data_set.messages.data_set_id
+  schedule_id    = "incremental-refresh-${replace(each.value, ":", "")}"
+  schedule {
+    refresh_type = "INCREMENTAL_REFRESH"
+    schedule_frequency {
+      interval        = "DAILY"
+      time_of_the_day = each.value
+      timezone        = var.spice_refresh_timezone
+    }
+  }
+}
+
 # SPICE Incremental Refresh Schedule
 resource "aws_quicksight_refresh_schedule" "incremental" {
-  count          = var.spice_enabled ? 1 : 0
+  count          = var.spice_enabled && length(var.spice_refresh_daily_times) == 0 ? 1 : 0
   aws_account_id = data.aws_caller_identity.current.account_id
   data_set_id    = aws_quicksight_data_set.messages.data_set_id
   schedule_id    = "incremental-refresh"

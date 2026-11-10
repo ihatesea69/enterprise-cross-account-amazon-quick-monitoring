@@ -41,6 +41,34 @@ s3 = boto3.client("s3")
 cloudwatch = _source_client("cloudwatch")
 
 
+# CloudWatch publishes the SPICE capacity metrics only when consumed or purchased capacity changes
+# by 1 MB or more, so a quiet account has no datapoint for days. To keep one point per daily run,
+# the latest datapoint inside this lookback is carried forward and stamped with the run time.
+CARRY_FORWARD_LOOKBACK_DAYS = int(os.environ.get("SPICE_CARRY_FORWARD_DAYS", "455"))
+
+
+def _latest_values(now):
+    """Most recent (limit, consumed) datapoint within the lookback, or None."""
+    resp = cloudwatch.get_metric_data(
+        MetricDataQueries=[
+            {"Id": mid, "MetricStat": {"Metric": {"Namespace": "AWS/QuickSight", "MetricName": name},
+                                       "Period": 3600, "Stat": "Maximum"}}
+            for mid, name in (("limit", "SPICECapacityLimitInMB"), ("consumed", "SPICECapacityConsumedInMB"))
+        ],
+        StartTime=now - timedelta(days=CARRY_FORWARD_LOOKBACK_DAYS),
+        EndTime=now,
+        ScanBy="TimestampDescending",
+        MaxDatapoints=10,
+    )
+    latest = {}
+    for result in resp.get("MetricDataResults", []):
+        if result["Values"]:
+            latest[result["Id"]] = result["Values"][0]  # TimestampDescending: first is newest
+    if not latest:
+        return None
+    return latest.get("limit", 0.0), latest.get("consumed", 0.0)
+
+
 def handler(event, context):
     bucket = event["bucket"]
     now = datetime.now(timezone.utc)
@@ -79,8 +107,6 @@ def handler(event, context):
 
     # Merge into records
     all_timestamps = sorted(set(list(limit_data.keys()) + list(consumed_data.keys())))
-    if not all_timestamps:
-        return {"output_key": None, "count": 0}
 
     timestamps = []
     limits = []
@@ -90,6 +116,16 @@ def handler(event, context):
         timestamps.append(int(ts_dt.timestamp() * 1000))  # epoch millis
         limits.append(limit_data.get(ts_str, 0.0))
         consumeds.append(consumed_data.get(ts_str, 0.0))
+
+    carried_forward = False
+    if not timestamps:
+        latest = _latest_values(now)
+        if latest is None:
+            return {"output_key": None, "count": 0, "carried_forward": False}
+        timestamps.append(int(now.timestamp() * 1000))
+        limits.append(latest[0])
+        consumeds.append(latest[1])
+        carried_forward = True
 
     # Write Parquet
     table = pa.table({
@@ -104,4 +140,4 @@ def handler(event, context):
     output_key = f"qs_metadata/spice_capacity/year={dt.year:04d}/month={dt.month:02d}/day={dt.day:02d}/{uuid.uuid4()}.parquet"
     s3.put_object(Bucket=bucket, Key=output_key, Body=buf.getvalue())
 
-    return {"output_key": output_key, "count": len(timestamps)}
+    return {"output_key": output_key, "count": len(timestamps), "carried_forward": carried_forward}

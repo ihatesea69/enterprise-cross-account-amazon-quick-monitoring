@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import boto3
 
@@ -83,6 +83,9 @@ def _query_athena_user_stats(database, output_location):
 
     # 30-day partition filter formatted as YYYYMMDD
     cutoff_date = (datetime.now(tz=timezone.utc) - timedelta(days=30)).strftime("%Y%m%d")
+    # Upper bound too: with only ">=" Athena still lists every projected partition up to 2030
+    # (measured 2026-11-02). No rows can exist after tomorrow, so the result is unchanged.
+    upper_date = (datetime.now(tz=timezone.utc) + timedelta(days=1)).strftime("%Y%m%d")
 
     sql = f"""
 SELECT regexp_extract(user_arn, '[^/]+$') AS username,
@@ -90,7 +93,7 @@ SELECT regexp_extract(user_arn, '[^/]+$') AS username,
        MIN(event_timestamp) AS first_seen,
        MAX(event_timestamp) AS last_msg_ts
 FROM {database}.message_enriched
-WHERE year || month || day >= '{cutoff_date}'
+WHERE year || month || day BETWEEN '{cutoff_date}' AND '{upper_date}'
 GROUP BY 1
 """
 
@@ -150,16 +153,40 @@ GROUP BY 1
 
     return user_stats
 
-ROLE_TO_LICENSE = {
-    "ADMIN_PRO":  ("Enterprise",   4.0, 4.0),
-    "AUTHOR_PRO": ("Enterprise",   4.0, 4.0),
-    "READER_PRO": ("Professional", 2.0, 2.0),
-    "ADMIN":      ("Standard",     0.0, 0.0),
-    "AUTHOR":     ("Standard",     0.0, 0.0),
-    "READER":     ("Standard",     0.0, 0.0),
-}
+# License tier and monthly agent-hours entitlement per QuickSight role, per the Amazon Quick
+# pricing page (https://aws.amazon.com/quick/pricing/, read 2026-11-02):
+#   - Admin Pro / Author Pro = Quick Enterprise (18 h), Reader Pro = Quick Professional (8 h).
+#   - BI Author licenses (Admin / Author roles) "receive an upgrade to Enterprise licenses until
+#     March 31, 2027. The same allowances apply."
+#   - BI Reader licenses are upgraded to Essentials: 1 h, 3 h until January 31, 2027.
+# Agent hours are one pool shared by Chat, Research, Flows, Automate, artifact generation, so the
+# research and agent allotments carry the same value.
+# After the promotional end dates the tiers fall back to the values below; re-check the pricing
+# page before then.
+BI_AUTHOR_ENTERPRISE_UNTIL = date(2027, 3, 31)
+ESSENTIALS_BONUS_UNTIL = date(2027, 1, 31)
+
+ROLE_ALIASES = {"RESTRICTED_AUTHOR": "AUTHOR", "RESTRICTED_READER": "READER"}
 
 DEFAULT_LICENSE = ("Standard", 0.0, 0.0)
+
+
+def license_for_role(role, today=None):
+    """Return (license_type, research_allotment, agent_allotment) for a QuickSight role on `today`."""
+    today = today or datetime.now(tz=timezone.utc).date()
+    role = ROLE_ALIASES.get(role, role)
+    if role in ("ADMIN_PRO", "AUTHOR_PRO"):
+        return ("Enterprise", 18.0, 18.0)
+    if role == "READER_PRO":
+        return ("Professional", 8.0, 8.0)
+    if role in ("ADMIN", "AUTHOR"):
+        if today <= BI_AUTHOR_ENTERPRISE_UNTIL:
+            return ("Enterprise", 18.0, 18.0)
+        return DEFAULT_LICENSE
+    if role == "READER":
+        hours = 3.0 if today <= ESSENTIALS_BONUS_UNTIL else 1.0
+        return ("Essentials", hours, hours)
+    return DEFAULT_LICENSE
 
 
 def _list_all_objects(bucket, prefix):
@@ -199,7 +226,7 @@ def handler(event, context):
         qs_data = qs_users.get(username, {})
 
         qs_role = qs_data.get("quicksight_role")
-        license_type, research_allot, agent_allot = ROLE_TO_LICENSE.get(qs_role, DEFAULT_LICENSE)
+        license_type, research_allot, agent_allot = license_for_role(qs_role)
 
         record = {
             **idc_user,
