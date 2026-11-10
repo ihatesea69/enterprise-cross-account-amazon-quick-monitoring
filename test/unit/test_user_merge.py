@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+from datetime import date
 from io import BytesIO
 from unittest.mock import patch, MagicMock, call
 
@@ -133,17 +134,38 @@ def test_merge_combines_idc_and_qs(mock_s3_raw, monkeypatch):
     assert record["quicksight_active"] is True
 
 
-@pytest.mark.parametrize("qs_role,expected_license", [
-    ("ADMIN_PRO", "Enterprise"),
-    ("AUTHOR_PRO", "Enterprise"),
-    ("READER_PRO", "Professional"),
-    ("ADMIN", "Standard"),
-    ("AUTHOR", "Standard"),
-    ("READER", "Standard"),
+_BEFORE_PROMO_END = date(2026, 11, 2)
+_AFTER_PROMO_END = date(2027, 4, 1)
+
+
+@pytest.mark.parametrize("qs_role,today,expected", [
+    ("ADMIN_PRO", _BEFORE_PROMO_END, ("Enterprise", 18.0, 18.0)),
+    ("AUTHOR_PRO", _BEFORE_PROMO_END, ("Enterprise", 18.0, 18.0)),
+    ("READER_PRO", _BEFORE_PROMO_END, ("Professional", 8.0, 8.0)),
+    # BI Author (Admin/Author) upgraded to Enterprise allowances until 2027-03-31
+    ("ADMIN", _BEFORE_PROMO_END, ("Enterprise", 18.0, 18.0)),
+    ("AUTHOR", _BEFORE_PROMO_END, ("Enterprise", 18.0, 18.0)),
+    ("ADMIN", date(2027, 3, 31), ("Enterprise", 18.0, 18.0)),
+    ("ADMIN", _AFTER_PROMO_END, ("Standard", 0.0, 0.0)),
+    ("RESTRICTED_AUTHOR", _BEFORE_PROMO_END, ("Enterprise", 18.0, 18.0)),
+    # BI Reader upgraded to Essentials: 3 h until 2027-01-31, then 1 h
+    ("READER", _BEFORE_PROMO_END, ("Essentials", 3.0, 3.0)),
+    ("READER", date(2027, 2, 1), ("Essentials", 1.0, 1.0)),
+    ("RESTRICTED_READER", _BEFORE_PROMO_END, ("Essentials", 3.0, 3.0)),
+    (None, _BEFORE_PROMO_END, ("Standard", 0.0, 0.0)),
+    ("SOMETHING_NEW", _BEFORE_PROMO_END, ("Standard", 0.0, 0.0)),
 ])
+def test_license_for_role(qs_role, today, expected):
+    """License tier and agent-hours entitlement follow the Amazon Quick pricing page."""
+    from index import license_for_role
+
+    assert license_for_role(qs_role, today=today) == expected
+
+
+@pytest.mark.parametrize("qs_role", ["ADMIN_PRO", "AUTHOR_PRO", "READER_PRO", "ADMIN", "AUTHOR", "READER"])
 @patch("index.s3")
-def test_merge_derives_license_type(mock_s3_raw, monkeypatch, qs_role, expected_license):
-    """License type should be derived from QuickSight role correctly."""
+def test_merge_writes_license_fields(mock_s3_raw, monkeypatch, qs_role):
+    """The merged record carries exactly what license_for_role returns for the user's role today."""
     monkeypatch.setenv("BUCKET", "test-bucket")
     monkeypatch.setenv("OUTPUT_KEY", "user_attributes/users.jsonl")
 
@@ -160,73 +182,11 @@ def test_merge_derives_license_type(mock_s3_raw, monkeypatch, qs_role, expected_
 
     index.handler({"qs_list_key": "temp/qs_users.json"}, None)
 
-    put_call = mock_s3_raw.put_object.call_args.kwargs
-    record = json.loads(put_call["Body"].decode().strip())
-    assert record["license_type"] == expected_license
-
-
-@pytest.mark.parametrize("qs_role,expected_allotment", [
-    ("ADMIN_PRO", 4.0),
-    ("AUTHOR_PRO", 4.0),
-    ("READER_PRO", 2.0),
-    ("ADMIN", 0.0),
-    ("AUTHOR", 0.0),
-    ("READER", 0.0),
-])
-@patch("index.s3")
-def test_merge_derives_allotment(mock_s3_raw, monkeypatch, qs_role, expected_allotment):
-    """Agent hours allotment should be derived correctly from QS role."""
-    monkeypatch.setenv("BUCKET", "test-bucket")
-    monkeypatch.setenv("OUTPUT_KEY", "user_attributes/users.jsonl")
-
-    import index
-
-    idc_user = {**_IDC_USER, "user_id": "user-test", "username": "testuser"}
-    qs_data = {"testuser": {"quicksight_role": qs_role, "quicksight_email": "t@t.com", "quicksight_active": True}}
-
-    merged_mock = _make_s3_mock([idc_user], qs_data)
-    mock_s3_raw.get_object.side_effect = merged_mock.get_object.side_effect
-    mock_s3_raw.get_paginator.return_value = merged_mock.get_paginator.return_value
-    mock_s3_raw.put_object.return_value = {}
-    mock_s3_raw.delete_object.return_value = {}
-
-    index.handler({"qs_list_key": "temp/qs_users.json"}, None)
-
-    put_call = mock_s3_raw.put_object.call_args.kwargs
-    record = json.loads(put_call["Body"].decode().strip())
-    assert record["monthly_agent_hours_allotment"] == expected_allotment
-
-
-@pytest.mark.parametrize("qs_role,expected_research_allotment", [
-    ("ADMIN_PRO", 4.0),
-    ("AUTHOR_PRO", 4.0),
-    ("READER_PRO", 2.0),
-    ("ADMIN", 0.0),
-    ("AUTHOR", 0.0),
-    ("READER", 0.0),
-])
-@patch("index.s3")
-def test_merge_derives_research_allotment(mock_s3_raw, monkeypatch, qs_role, expected_research_allotment):
-    """Research hours allotment should be derived correctly from QS role."""
-    monkeypatch.setenv("BUCKET", "test-bucket")
-    monkeypatch.setenv("OUTPUT_KEY", "user_attributes/users.jsonl")
-
-    import index
-
-    idc_user = {**_IDC_USER, "user_id": "user-test", "username": "testuser"}
-    qs_data = {"testuser": {"quicksight_role": qs_role, "quicksight_email": "t@t.com", "quicksight_active": True}}
-
-    merged_mock = _make_s3_mock([idc_user], qs_data)
-    mock_s3_raw.get_object.side_effect = merged_mock.get_object.side_effect
-    mock_s3_raw.get_paginator.return_value = merged_mock.get_paginator.return_value
-    mock_s3_raw.put_object.return_value = {}
-    mock_s3_raw.delete_object.return_value = {}
-
-    index.handler({"qs_list_key": "temp/qs_users.json"}, None)
-
-    put_call = mock_s3_raw.put_object.call_args.kwargs
-    record = json.loads(put_call["Body"].decode().strip())
-    assert record["monthly_research_hours_allotment"] == expected_research_allotment
+    record = json.loads(mock_s3_raw.put_object.call_args.kwargs["Body"].decode().strip())
+    lic, research, agent = index.license_for_role(qs_role)
+    assert record["license_type"] == lic
+    assert record["monthly_research_hours_allotment"] == research
+    assert record["monthly_agent_hours_allotment"] == agent
 
 
 @patch("index.s3")

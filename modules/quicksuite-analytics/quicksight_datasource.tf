@@ -7,8 +7,16 @@ resource "aws_quicksight_data_source" "athena" {
   parameters {
     athena {
       work_group = "primary"
+      role_arn   = local.quicksight_role_arn # null = account-wide QuickSight service role
     }
   }
+
+  # IAM policies must exist before QuickSight validates the role on create
+  depends_on = [
+    aws_iam_role_policy_attachment.quicksight_athena_access,
+    aws_iam_role_policy.quicksight_athena_scoped,
+    aws_iam_role_policy.quicksight_s3_access,
+  ]
 
   permission {
     actions = [

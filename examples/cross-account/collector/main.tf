@@ -1,5 +1,4 @@
-# Collector side: runs in the account that hosts the dashboard (for example a partner or
-# central monitoring account).
+# Collector side: runs in the account that hosts the dashboard (the collector account).
 # One instance per monitored account; name_prefix keeps instances apart.
 # Apply this FIRST, then ../source with the outputs below.
 
@@ -52,12 +51,12 @@ module "analytics" {
   manage_delivery_sources = false      # the customer account creates them (../source)
   cloudtrail_mode         = "disabled" # do not read the customer's full API history
 
-  quicksight_admin_group = "REPLACE-with-your-QuickSight-admin-group"
-  dashboard_viewers      = { users = ["REPLACE-with-a-QuickSight-user-name"] }
+  quicksight_admin_group = "QuickSightAdmins"
+  dashboard_viewers      = { users = ["alice"] }
 
-  # Collector-account specifics, uncomment when they apply
-  # permissions_boundary_arn = "arn:aws:iam::111111111111:policy/<required-permissions-boundary>"
-  # layer_build_shell        = "C:/Program Files/Git/bin/bash.exe" # Windows: Git Bash
+  # Collector-account specifics (e.g. a required permissions boundary)
+  permissions_boundary_arn = "arn:aws:iam::111111111111:policy/bedrock-limit-permission-boundary"
+  layer_build_shell        = "C:/Program Files/Git/bin/bash.exe"
   # Optional: reuse the existing instance's layer instead of publishing a second 61 MB copy
   # lambda_layer_arn = "arn:aws:lambda:ap-southeast-1:111111111111:layer:quicksuite-dependencies:<version>"
 

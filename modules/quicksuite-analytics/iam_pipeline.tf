@@ -136,32 +136,49 @@ resource "aws_iam_role_policy" "sfn_permissions" {
   })
 }
 
-# QuickSight Athena access.
-#
-# The QuickSight service role is account-wide and shared with every other
-# QuickSight project in the account. Earlier versions of this module attached
-# the AWS-managed AWSQuicksightAthenaAccess to it, so `terraform destroy` of one
-# deployment detached the policy and broke Athena for every other dashboard in
-# the account. The module now writes a scoped inline policy instead, and the
-# `removed` block below makes Terraform forget the old attachment WITHOUT
-# detaching it (other projects may still rely on it).
-removed {
-  from = aws_iam_role_policy_attachment.quicksight_athena_access
+# Optional dedicated role for the Athena data source (var.create_quicksight_athena_role).
+# Leaves the account-wide QuickSight service role untouched.
+resource "aws_iam_role" "quicksight_athena" {
+  count                = var.create_quicksight_athena_role ? 1 : 0
+  name                 = "${local.name_prefix}-quicksight-athena"
+  permissions_boundary = var.permissions_boundary_arn
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "quicksight.amazonaws.com" }
+      Condition = { StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.current.account_id } }
+    }]
+  })
+}
 
-  lifecycle {
-    destroy = false
-  }
+locals {
+  quicksight_role_name = var.create_quicksight_athena_role ? aws_iam_role.quicksight_athena[0].name : var.quicksight_service_role_name
+  quicksight_role_arn  = var.create_quicksight_athena_role ? aws_iam_role.quicksight_athena[0].arn : null
+}
+
+# QuickSight Athena access (AWS-managed policy), ONLY on the module's own role.
+# The account-wide QuickSight service role is shared with other projects: an
+# attachment owned by this module was detached on `terraform destroy`
+# (2026-11-02) and broke every other dashboard in the account. On the shared
+# role the module writes the scoped inline policy below instead.
+resource "aws_iam_role_policy_attachment" "quicksight_athena_access" {
+  count      = var.create_quicksight_athena_role ? 1 : 0
+  role       = local.quicksight_role_name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSQuicksightAthenaAccess"
 }
 
 data "aws_partition" "current" {}
 
-# Scoped Athena + Glue access: the workgroup the data source uses and this
-# module's Glue database only. The S3 statement matches AWSQuicksightAthenaAccess:
-# with no workgroup output location, QuickSight writes Athena results to
-# aws-athena-query-results-*.
+# Scoped Athena + Glue access on the shared QuickSight service role: the
+# workgroup the data source uses and this module's Glue database only. The S3
+# statement matches AWSQuicksightAthenaAccess: with no workgroup output
+# location, QuickSight writes Athena results to aws-athena-query-results-*.
 resource "aws_iam_role_policy" "quicksight_athena_scoped" {
-  name = "QuickSightAthenaAccess-${local.name_prefix}"
-  role = var.quicksight_service_role_name
+  count = var.create_quicksight_athena_role ? 0 : 1
+  name  = "QuickSightAthenaAccess-${local.name_prefix}"
+  role  = local.quicksight_role_name
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -174,7 +191,7 @@ resource "aws_iam_role_policy" "quicksight_athena_scoped" {
           "athena:GetQueryResults", "athena:GetQueryResultsStream",
           "athena:GetWorkGroup",
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:athena:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:workgroup/primary"
+        Resource = "arn:${data.aws_partition.current.partition}:athena:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:workgroup/primary"
       },
       {
         Sid    = "AthenaCatalogMetadata"
@@ -183,7 +200,7 @@ resource "aws_iam_role_policy" "quicksight_athena_scoped" {
           "athena:GetDataCatalog", "athena:GetDatabase", "athena:GetTableMetadata",
           "athena:ListDatabases", "athena:ListTableMetadata",
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:athena:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:datacatalog/AwsDataCatalog"
+        Resource = "arn:${data.aws_partition.current.partition}:athena:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:datacatalog/AwsDataCatalog"
       },
       {
         Sid      = "AthenaListOnly"
@@ -199,9 +216,9 @@ resource "aws_iam_role_policy" "quicksight_athena_scoped" {
           "glue:GetPartition", "glue:GetPartitions", "glue:BatchGetPartition",
         ]
         Resource = [
-          "arn:${data.aws_partition.current.partition}:glue:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:catalog",
-          "arn:${data.aws_partition.current.partition}:glue:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:database/${aws_glue_catalog_database.quicksuite.name}",
-          "arn:${data.aws_partition.current.partition}:glue:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:table/${aws_glue_catalog_database.quicksuite.name}/*",
+          "arn:${data.aws_partition.current.partition}:glue:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:catalog",
+          "arn:${data.aws_partition.current.partition}:glue:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:database/${aws_glue_catalog_database.quicksuite.name}",
+          "arn:${data.aws_partition.current.partition}:glue:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:table/${aws_glue_catalog_database.quicksuite.name}/*",
         ]
       },
       {
@@ -228,7 +245,7 @@ resource "aws_iam_role_policy" "quicksight_athena_scoped" {
 # QuickSight S3 access policy
 resource "aws_iam_role_policy" "quicksight_s3_access" {
   name = "QuickSightS3Access-${local.name_prefix}"
-  role = var.quicksight_service_role_name
+  role = local.quicksight_role_name
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = concat([

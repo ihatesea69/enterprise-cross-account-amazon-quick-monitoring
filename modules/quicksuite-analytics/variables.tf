@@ -15,6 +15,18 @@ variable "dashboard_viewers" {
   }
 }
 
+variable "dashboard_readers" {
+  description = "Groups and users granted view access to the DASHBOARD ONLY (no dataset permissions). Use for Reader / Reader Pro users: QuickSight rejects dataset permissions for principals below AUTHOR."
+  type = object({
+    groups = optional(list(string), [])
+    users  = optional(list(string), [])
+  })
+  default = {
+    groups = []
+    users  = []
+  }
+}
+
 variable "quicksight_namespace" {
   description = "QuickSight namespace"
   type        = string
@@ -34,9 +46,49 @@ variable "spice_enabled" {
 }
 
 variable "spice_refresh_interval" {
-  description = "SPICE incremental refresh interval (MINUTE15, MINUTE30, HOURLY, DAILY)"
+  description = "SPICE incremental refresh interval (MINUTE15, MINUTE30, HOURLY, DAILY). HOURLY by default: every refresh is an Athena query that lists S3 partition prefixes, so MINUTE15 costs 4x the S3 LIST requests."
   type        = string
-  default     = "MINUTE15"
+  default     = "HOURLY"
+}
+
+variable "spice_refresh_daily_times" {
+  description = "When non-empty, incremental refresh runs as one DAILY schedule per listed time (HH:MM in spice_refresh_timezone) instead of spice_refresh_interval. QuickSight has no 'every N hours' interval: [\"07:00\", \"15:00\", \"23:00\"] gives every 8 hours. Max 4 times (5 schedules per dataset, one is the weekly full refresh)."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = length(var.spice_refresh_daily_times) <= 4 && alltrue([for t in var.spice_refresh_daily_times : can(regex("^([01][0-9]|2[0-3]):[0-5][0-9]$", t))])
+    error_message = "spice_refresh_daily_times: at most 4 values, each HH:MM."
+  }
+}
+
+variable "spice_refresh_timezone" {
+  description = "Timezone (java.util.TimeZone ID) for spice_refresh_daily_times."
+  type        = string
+  default     = "UTC"
+}
+
+variable "s3_request_daily_budget_usd" {
+  description = "If set, create a DAILY AWS Budget on S3 API-request cost (the LIST/GET tiers) in this account+Region, alerting budget_alert_emails when actual cost passes this USD amount. Scopes without a cost-allocation tag. null = no budget."
+  type        = number
+  default     = null
+}
+
+variable "budget_alert_emails" {
+  description = "Email addresses notified when s3_request_daily_budget_usd is exceeded. Empty = create the budget with no email subscriber."
+  type        = list(string)
+  default     = []
+}
+
+variable "query_lookback_days" {
+  description = "Days of history the SPICE datasets read from Athena. Bounds the year/month/day partitions so Athena only lists those S3 prefixes instead of every projected partition (2024-2030 = 2604 per table, mostly empty). Rows older than this drop out of SPICE at the next full refresh."
+  type        = number
+  default     = 180
+
+  validation {
+    condition     = var.query_lookback_days >= 91 && var.query_lookback_days <= 2000
+    error_message = "query_lookback_days must be between 91 (the dashboard default range is 90 days) and 2000."
+  }
 }
 
 variable "quicksight_service_role_name" {
@@ -228,4 +280,10 @@ variable "layer_build_shell" {
   description = "Bash interpreter for the Lambda layer local-exec. On Windows use Git Bash, e.g. C:/Program Files/Git/bin/bash.exe"
   type        = string
   default     = "/bin/bash"
+}
+
+variable "create_quicksight_athena_role" {
+  description = "Create a dedicated IAM role for the Athena data source (attached via role_arn) instead of adding policies to the account-wide QuickSight service role. Use in accounts where quicksight_service_role_name does not exist or must not be changed. Default false keeps the original behaviour."
+  type        = bool
+  default     = false
 }

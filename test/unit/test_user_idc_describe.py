@@ -172,3 +172,32 @@ def test_cross_account_assumes_role():
         aws_session_token="token_test",
     )
     assert result == {"user_id": "user-001"}
+
+
+@patch("index.s3")
+@patch("index.identitystore")
+def test_user_idc_describe_reads_lowercase_scim_keys(mock_identitystore, mock_s3, monkeypatch):
+    """SCIM-provisioned users (Entra ID) return lowercase enterprise keys; they must still be read."""
+    monkeypatch.setenv("IDENTITY_STORE_ID", "d-1234567890")
+    monkeypatch.setenv("BUCKET", "test-bucket")
+
+    import index
+
+    resp = _make_describe_response()
+    resp["User"]["Extensions"] = {
+        "aws:identitystore:enterprise": {
+            "department": "TCTY-EXAMPLE",
+            "costCenter": "CC-9",
+            "manager": {"displayName": "Bob Manager", "value": "bob.manager"},
+        }
+    }
+    mock_identitystore.describe_user.return_value = resp
+    mock_s3.put_object.return_value = {}
+
+    index.handler({"user_id": "user-001", "username": "alice"}, None)
+
+    body = json.loads(mock_s3.put_object.call_args.kwargs["Body"].decode("utf-8"))
+    assert body["department"] == "TCTY-EXAMPLE"
+    assert body["cost_center"] == "CC-9"
+    assert body["manager"] == "Bob Manager <bob.manager>"
+    assert body["division"] is None

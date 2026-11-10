@@ -62,8 +62,9 @@ resource "aws_quicksight_data_set" "asset_inventory" {
             useridentity.onbehalfof.userid
           ) AS added_by,
           year, month, day
-        FROM ${aws_glue_catalog_database.quicksuite.name}.${aws_glue_catalog_table.cloudtrail[0].name}
-        WHERE eventsource = 'quicksight.amazonaws.com'
+        FROM ${aws_glue_catalog_database.quicksuite.name}.${aws_glue_catalog_table.cloudtrail[0].name} ct
+        WHERE ${replace(local.partition_window, "ALIAS", "ct")}
+          AND eventsource = 'quicksight.amazonaws.com'
           AND readonly = false
           AND eventname IN (
             'CreateSpace', 'CreateInlineSpace', 'UpdateSpace',
@@ -316,9 +317,25 @@ resource "aws_quicksight_data_set" "asset_inventory" {
   }
 }
 
+# SPICE Incremental Refresh at fixed daily times — Asset Inventory (spice_refresh_daily_times)
+resource "aws_quicksight_refresh_schedule" "asset_inventory_incremental_daily" {
+  for_each       = local.cloudtrail_enabled && var.spice_enabled ? toset(var.spice_refresh_daily_times) : toset([])
+  aws_account_id = data.aws_caller_identity.current.account_id
+  data_set_id    = aws_quicksight_data_set.asset_inventory[0].data_set_id
+  schedule_id    = "asset-inventory-incremental-refresh-${replace(each.value, ":", "")}"
+  schedule {
+    refresh_type = "INCREMENTAL_REFRESH"
+    schedule_frequency {
+      interval        = "DAILY"
+      time_of_the_day = each.value
+      timezone        = var.spice_refresh_timezone
+    }
+  }
+}
+
 # SPICE Incremental Refresh Schedule — Asset Inventory
 resource "aws_quicksight_refresh_schedule" "asset_inventory_incremental" {
-  count          = local.cloudtrail_enabled && var.spice_enabled ? 1 : 0
+  count          = local.cloudtrail_enabled && var.spice_enabled && length(var.spice_refresh_daily_times) == 0 ? 1 : 0
   aws_account_id = data.aws_caller_identity.current.account_id
   data_set_id    = aws_quicksight_data_set.asset_inventory[0].data_set_id
   schedule_id    = "asset-inventory-incremental-refresh"

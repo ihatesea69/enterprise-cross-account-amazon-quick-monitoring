@@ -35,6 +35,23 @@ def _get_extension(user, ext_name):
     return extensions.get(ext_name, {})
 
 
+def _ci_get(d, *names):
+    """Case-insensitive lookup over candidate key names.
+
+    SCIM-provisioned users (e.g. from Microsoft Entra ID) come back with lowercase SCIM keys
+    ('department', 'costCenter', manager 'displayName'/'value'), while users edited in the
+    Identity Center console use 'Department', 'CostCenter', manager 'Name'/'UserName'.
+    """
+    if not isinstance(d, dict):
+        return None
+    lowered = {str(k).lower(): v for k, v in d.items()}
+    for n in names:
+        v = lowered.get(n.lower())
+        if v not in (None, ""):
+            return v
+    return None
+
+
 def handler(event, context):
     """Describe a single IDC user with enterprise extension, write to temp/idc_users/{user_id}.json."""
     user_id = event["user_id"]
@@ -71,17 +88,17 @@ def handler(event, context):
 
     # Enterprise extension fields
     enterprise = _get_extension(user, "aws:identitystore:enterprise")
-    department = enterprise.get("Department")
-    division = enterprise.get("Division")
-    organization = enterprise.get("Organization")
-    cost_center = enterprise.get("CostCenter")
-    employee_number = enterprise.get("EmployeeNumber")
+    department = _ci_get(enterprise, "Department")
+    division = _ci_get(enterprise, "Division")
+    organization = _ci_get(enterprise, "Organization")
+    cost_center = _ci_get(enterprise, "CostCenter")
+    employee_number = _ci_get(enterprise, "EmployeeNumber")
 
     # Manager: stored as "Name <username>" when available
-    manager_obj = enterprise.get("Manager", {})
+    manager_obj = _ci_get(enterprise, "Manager") or {}
     if manager_obj:
-        manager_name = manager_obj.get("Name", "")
-        manager_username = manager_obj.get("UserName", "")
+        manager_name = _ci_get(manager_obj, "Name", "DisplayName") or ""
+        manager_username = _ci_get(manager_obj, "UserName", "Value") or ""
         if manager_name and manager_username:
             manager = f"{manager_name} <{manager_username}>"
         elif manager_name:

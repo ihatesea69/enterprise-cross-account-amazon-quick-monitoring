@@ -42,7 +42,7 @@ output "cloudtrail_cross_account_bucket_policy" {
     Sid    = "AllowQuickSuiteAthenaCrossAccount"
     Effect = "Allow"
     Principal = {
-      AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.quicksight_service_role_name}"
+      AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.quicksight_role_name}"
     }
     Action = ["s3:GetObject", "s3:GetBucketLocation", "s3:ListBucket"]
     Resource = [

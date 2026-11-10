@@ -39,6 +39,11 @@ locals {
   # Roles in other accounts the Lambdas may assume
   assume_role_arns = distinct(compact([var.source_role_arn, var.identity_store_role_arn]))
 
+  # Partition window for dataset SQL. Bounded on BOTH ends so Athena prunes projected partitions
+  # (measured 2026-11-02: an open-ended ">=" still lists most of the 2024-2030 range).
+  # Use: replace(local.partition_window, "ALIAS", "m")
+  partition_window = "concat(ALIAS.year, ALIAS.month, ALIAS.day) BETWEEN date_format(date_add('day', -${var.query_lookback_days}, current_date), '%Y%m%d') AND date_format(date_add('day', 1, current_date), '%Y%m%d')"
+
   schedule_rate = {
     MINUTE15 = "rate(15 minutes)"
     MINUTE30 = "rate(30 minutes)"

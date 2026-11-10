@@ -94,3 +94,59 @@ def test_empty_metrics(mock_s3, mock_cloudwatch):
     assert result["output_key"] is None
     assert result["count"] == 0
     mock_s3.put_object.assert_not_called()
+
+
+@patch("index.cloudwatch")
+@patch("index.s3")
+def test_carries_forward_last_value_when_no_datapoint_in_24h(mock_s3, mock_cloudwatch):
+    """CloudWatch only publishes on >= 1 MB change: with no point in 24 h, write the latest older
+    point stamped with the run time so the trend keeps one point per day."""
+    import index
+    import pyarrow.parquet as pq
+
+    old = datetime(2024, 2, 20, 8, 0, 0, tzinfo=timezone.utc)
+    mock_cloudwatch.get_metric_data.side_effect = [
+        {"MetricDataResults": [
+            {"Id": "limit", "Timestamps": [], "Values": []},
+            {"Id": "consumed", "Timestamps": [], "Values": []},
+        ]},
+        {"MetricDataResults": [
+            {"Id": "limit", "Timestamps": [old], "Values": [163840.0]},
+            {"Id": "consumed", "Timestamps": [old], "Values": [0.65]},
+        ]},
+    ]
+    mock_s3.put_object.return_value = {}
+
+    before_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    result = index.handler({"bucket": "test-bucket"}, None)
+
+    assert result["count"] == 1
+    assert result["carried_forward"] is True
+    second_call = mock_cloudwatch.get_metric_data.call_args_list[1].kwargs
+    assert second_call["ScanBy"] == "TimestampDescending"
+
+    table = pq.read_table(BytesIO(mock_s3.put_object.call_args[1]["Body"]))
+    row = table.to_pylist()[0]
+    assert row["spice_limit_mb"] == 163840.0
+    assert row["spice_consumed_mb"] == 0.65
+    assert row["timestamp"] >= before_ms
+
+
+@patch("index.cloudwatch")
+@patch("index.s3")
+def test_no_carry_forward_when_fresh_datapoint_exists(mock_s3, mock_cloudwatch):
+    """A real datapoint in the last 24 h is written as-is and the lookback query is not made."""
+    import index
+
+    ts = datetime.now(timezone.utc) - timedelta(hours=2)
+    mock_cloudwatch.get_metric_data.return_value = {"MetricDataResults": [
+        {"Id": "limit", "Timestamps": [ts], "Values": [100.0]},
+        {"Id": "consumed", "Timestamps": [ts], "Values": [5.0]},
+    ]}
+    mock_s3.put_object.return_value = {}
+
+    result = index.handler({"bucket": "test-bucket"}, None)
+
+    assert result["count"] == 1
+    assert result["carried_forward"] is False
+    assert mock_cloudwatch.get_metric_data.call_count == 1

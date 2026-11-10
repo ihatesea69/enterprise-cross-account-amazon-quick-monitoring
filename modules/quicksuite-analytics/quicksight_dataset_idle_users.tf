@@ -21,6 +21,7 @@ resource "aws_quicksight_data_set" "idle_users" {
           SELECT DISTINCT regexp_extract(m.user_arn, '[^/]+$')
           FROM ${aws_glue_catalog_database.quicksuite.name}.message_enriched m
           WHERE from_unixtime(m.event_timestamp / 1000) >= date_add('day', -90, current_date)
+            AND ${replace(local.partition_window, "ALIAS", "m")}
         )
       EOT
       columns {

@@ -46,7 +46,7 @@ account's API calls) and `source_role_arn` is set.
   `aws-quicksight-service-role-v0`, so they fail with `s3:ListBucket` PERMISSION_DENIED (IAM
   propagation). Scheduled incremental refreshes then keep failing with "The lookback window
   column is not valid" until one full refresh succeeds, and the dashboard shows "Cannot access
-  data for this visual". Measured on two separate deployments (2026-10-28).
+  data for this visual". Measured on both instances (2026-10-28).
 - Assumed-role credentials are taken once per Lambda cold start (1 hour). The schedules run
   every 6 hours (user sync) and daily (metadata), so a warm container does not outlive them.
 - Vended logs are not retroactive: the dashboard starts on the day the deliveries are created.
